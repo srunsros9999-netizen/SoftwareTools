@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="km">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Software Tools Cambo - Premium Software</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Koulen&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <!-- Firebase SDKs -->
+    <!-- FIX: Added missing '=' sign. Was <script type"module"> -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"; import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"; import { getFirestore,
+        doc, onSnapshot, setDoc, setLogLevel, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"; // --- Firebase Initialization --- // These global variables are provided by the environment. const appId
+        = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}'); const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token
+        : null; let db, auth, currentUserId; try { const app = initializeApp(firebaseConfig); auth = getAuth(app); db = getFirestore(app); setLogLevel('Debug'); // Enable Firestore logging onAuthStateChanged(auth, (user) => { if (user) { console.log("User
+        is signed in:", user.uid); initApp(user.uid); } else { console.log("No user signed in, attempting token/anon login."); signInWithTokenOrAnon(); } }); } catch (error) { console.error("Error initializing Firebase:", error); document.body.innerHTML
+        = '
+        <h1>Error initializing application. Please check console.</h1>'; } async function signInWithTokenOrAnon() { try { if (initialAuthToken) { await signInWithCustomToken(auth, initialAuthToken); console.log("Signed in with custom token."); } else { await
+        signInAnonymously(auth); console.log("Signed in anonymously."); } } catch (error) { console.error("Error during sign-in:", error); } } function initApp(userId) { currentUserId = userId; // Update Account Modal with User ID const userIdEl = document.getElementById('user-id');
+        if (userIdEl) { userIdEl.textContent = currentUserId; } // Listen to user's profile listenToUserProfile(currentUserId); // Setup profile save button listener setupProfileSaver(currentUserId); // Listen for winner announcements listenForWinner(db,
+        appId); // Setup admin panel setupAdminPanel(db, appId); } function listenToUserProfile(userId) { if (!db || !userId) return; // FIX: The path must have an even number of segments. // We add a collection 'data' before the document 'profile'. const
+        userProfileRef = doc(db, `/artifacts/${appId}/users/${userId}/data/profile`); onSnapshot(userProfileRef, (docSnap) => { const statusEl = document.getElementById('vip-status'); const expiryEl = document.getElementById('vip-expiry'); const nameInput
+        = document.getElementById('user-name'); const phoneInput = document.getElementById('user-phone'); const packageSelect = document.getElementById('vip-package-select'); // New if (docSnap.exists()) { const profile = docSnap.data(); let statusText
+        = "Not a VIP"; let expiryText = "--"; if (profile.status && profile.status !== 'none') { statusText = profile.status === '6month' ? 'VIP (6 Months)' : 'VIP (1 Year)'; } if (profile.expiry) { try { expiryText = new Date(profile.expiry.seconds *
+        1000).toLocaleDateString(); } catch(e) { console.warn("Invalid expiry date format", e); } } statusEl.textContent = statusText; expiryEl.textContent = expiryText; nameInput.value = profile.name || ''; phoneInput.value = profile.phone || ''; if(packageSelect)
+        packageSelect.value = profile.selected_package || 'none'; // Updated } else { console.log("No user profile found, creating one."); statusEl.textContent = "Not a VIP"; expiryEl.textContent = "--"; // Create a default profile document for the new
+        user try { // This setDoc call now uses the corrected userProfileRef setDoc(userProfileRef, { status: 'none', expiry: null, name: '', phone: '', selected_package: 'none' // New }, { merge: true }); } catch (error) { console.error("Error creating
+        user profile:", error); } } }, (error) => { console.error("Error listening to user profile:", error); document.getElementById('vip-status').textContent = "Error loading status."; }); } function setupProfileSaver(userId) { const saveBtn = document.getElementById('save-profile-btn');
+        const saveStatus = document.getElementById('save-profile-status'); if (!saveBtn) return; saveBtn.addEventListener('click', async () => { const name = document.getElementById('user-name').value; const phone = document.getElementById('user-phone').value;
+        const selected_package = document.getElementById('vip-package-select').value; // New if (!db || !userId) { saveStatus.textContent = "Error: Not connected."; saveStatus.classList.remove('text-green-400'); saveStatus.classList.add('text-red-400');
+        return; } saveStatus.textContent = "Saving..."; saveStatus.classList.remove('text-green-400', 'text-red-400'); const userProfileRef = doc(db, `/artifacts/${appId}/users/${userId}/data/profile`); try { await setDoc(userProfileRef, { name, phone,
+        selected_package }, { merge: true }); // Updated saveStatus.textContent = "Profile saved successfully!"; saveStatus.classList.add('text-green-400'); // --- NEW TELEGRAM NOTIFY LOGIC --- const notifyContainer = document.getElementById('notify-admin-container');
+        const notifyBtn = document.getElementById('notify-admin-btn'); if (notifyContainer && notifyBtn) { const packageSelectEl = document.getElementById('vip-package-select'); const packageText = packageSelectEl.options[packageSelectEl.selectedIndex].text;
+        const adminTelegram = "ChhaySemz"; // Admin's Telegram username let message = `--- VIP Activation Request ---\n\n`; message += `User ID: ${userId}\n`; message += `Name: ${name || 'N/A'}\n`; message += `Phone: ${phone || 'N/A'}\n`; message += `Package:
+        ${packageText || 'N/A'}\n\n`; message += `----------------------------------`; const telegramUrl = `https://t.me/${adminTelegram}?text=${encodeURIComponent(message)}`; notifyBtn.href = telegramUrl; notifyContainer.classList.remove('hidden'); }
+        // --- END NEW LOGIC --- } catch (error) { console.error("Error saving profile:", error); saveStatus.textContent = "Error saving profile."; saveStatus.classList.add('text-red-400'); } setTimeout(() => { saveStatus.textContent = ''; }, 3000); });
+        } // --- NEW: Admin & Winner Announcement Logic --- function listenForWinner(db, appId) { // FIX: Invalid document reference path. Must have even segments. // Changed from /public/data/giveaway to /public/giveaway // FIX 2 (from new error): Path
+        was missing 'data' segment as per rules. const winnerRef = doc(db, `/artifacts/${appId}/public/data/giveaway`); onSnapshot(winnerRef, (docSnap) => { if (docSnap.exists()) { const data = docSnap.data(); const winnerName = data.winnerName; const
+        announcedAt = data.announcedAt; // Firestore Timestamp if (winnerName && announcedAt) { const lastSeenWinner = localStorage.getItem('lastSeenWinner') || '0'; // Compare timestamp (seconds) to prevent showing old alerts if (announcedAt.seconds
+        > parseInt(lastSeenWinner)) { const winnerText = document.getElementById('winner-announcement-text'); if (winnerText) { winnerText.innerHTML = `Congratulations to <span class="font-bold text-yellow-400 text-2xl">${winnerName}</span> for winning
+        our random name giveaway!`; } document.getElementById('winner-announcement-modal').classList.remove('hidden'); // Save this announcement's timestamp so we don't show it again localStorage.setItem('lastSeenWinner', announcedAt.seconds.toString());
+        } } } }, (error) => { console.error("Error listening for winner:", error); }); } function setupAdminPanel(db, appId) { const announceBtn = document.getElementById('announce-winner-btn'); const winnerNameInput = document.getElementById('winner-name');
+        const adminStatus = document.getElementById('admin-status'); if (!announceBtn || !winnerNameInput || !adminStatus) return; announceBtn.addEventListener('click', async () => { const name = winnerNameInput.value.trim(); if (!name) { adminStatus.textContent
+        = "Please enter a winner's name."; adminStatus.classList.add('text-red-400'); return; } adminStatus.textContent = "Announcing..."; adminStatus.classList.remove('text-red-400', 'text-green-400'); try { // FIX: Invalid document reference path. Must
+        have even segments. // Changed from /public/data/giveaway to /public/giveaway // FIX 2 (from new error): Path was missing 'data' segment as per rules. const winnerRef = doc(db, `/artifacts/${appId}/public/data/giveaway`); await setDoc(winnerRef,
+        { winnerName: name, announcedAt: serverTimestamp() // Use server time }); adminStatus.textContent = "Winner announced successfully!"; adminStatus.classList.add('text-green-400'); winnerNameInput.value = ''; } catch (error) { console.error("Error
+        announcing winner:", error); adminStatus.textContent = "Error: Could not announce winner."; adminStatus.classList.add('text-red-400'); } setTimeout(() => { adminStatus.textContent = ''; }, 3000); }); } // --- END: Admin & Winner Announcement Logic
+        ---
+
+    </script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0a0a0a;
+            color: #e5e5e5;
+            position: relative;
+            z-index: 1;
+        }
+        
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('https://storage.googleapis.com/gemini-prod-us-west1-423528859/1a13c791-7611-4542-a6f3-3e95071abf3f.jpg');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            opacity: 0.1;
+            z-index: -1;
+        }
+        
+        .font-koulen {
+            font-family: 'Koulen', cursive;
+        }
+        
+        .hero-bg {
+            background-color: transparent;
+        }
+        
+        .card {
+            background-color: rgba(24, 24, 24, 0.8);
+            border: 1px solid #2a2a2a;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            backdrop-filter: blur(5px);
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2), 0 0 15px rgba(37, 99, 235, 0.3);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(90deg, #1e40af 0%, #3b82f6 100%);
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+        }
+        
+        .btn-primary:hover {
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
+            transform: translateY(-2px);
+        }
+        
+        .social-icon {
+            transition: transform 0.3s ease;
+        }
+        
+        .social-icon:hover {
+            transform: scale(1.2);
+        }
+        
+        html {
+            scroll-behavior: smooth;
+        }
+        /* Modal Styles */
+        
+        .modal.hidden {
+            display: none;
+        }
+        
+        .modal-panel {
+            transform: scale(0.95);
+            opacity: 0;
+            transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+        }
+        
+        .modal:not(.hidden) .modal-panel {
+            transform: scale(1);
+            opacity: 1;
+        }
+        /* Chatbot Styles */
+        
+        #chat-bubble {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(90deg, #1e40af 0%, #3b82f6 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            transition: transform 0.3s ease;
+        }
+        
+        #chat-bubble:hover {
+            transform: scale(1.1);
+        }
+        
+        #chat-window {
+            position: fixed;
+            bottom: 6rem;
+            right: 2rem;
+            width: 350px;
+            max-width: 90vw;
+            height: 500px;
+            max-height: 70vh;
+            background-color: #181818;
+            border: 1px solid #2a2a2a;
+            border-radius: 1rem;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            transform-origin: bottom right;
+            transform: scale(0);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        
+        #chat-window.open {
+            transform: scale(1);
+        }
+        
+        .chat-header {
+            background-color: #2a2a2a;
+            padding: 1rem;
+            color: white;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .chat-messages {
+            flex-grow: 1;
+            padding: 1rem;
+            overflow-y: auto;
+        }
+        
+        .message {
+            margin-bottom: 0.75rem;
+            max-width: 80%;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.75rem;
+            line-height: 1.4;
+        }
+        
+        .message.bot {
+            background-color: #2a2a2a;
+            color: #e5e5e5;
+            align-self: flex-start;
+            border-bottom-left-radius: 0;
+        }
+        
+        .message.user {
+            background-color: #3b82f6;
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 0;
+            margin-left: auto;
+        }
+        
+        .chat-options {
+            padding: 0.5rem 1rem;
+            border-top: 1px solid #2a2a2a;
+        }
+        
+        .option-btn {
+            background-color: transparent;
+            border: 1px solid #3b82f6;
+            color: #3b82f6;
+            padding: 0.5rem 1rem;
+            border-radius: 2rem;
+            cursor: pointer;
+            margin: 0.25rem;
+            transition: all 0.2s ease;
+        }
+        
+        .option-btn:hover {
+            background-color: #3b82f6;
+            color: white;
+        }
+        /* Spin Wheel Styles */
+        
+        #wheel-container {
+            position: relative;
+            width: 300px;
+            height: 300px;
+            margin: 2rem auto;
+        }
+        
+        #wheel {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: conic-gradient( #ff595e 0deg 36deg, #ffca3a 36deg 72deg, #8ac926 72deg 108deg, #1982c4 108deg 144deg, #6a4c93 144deg 180deg, #ff595e 180deg 216deg, #ffca3a 216deg 252deg, #8ac926 252deg 288deg, #1982c4 288deg 324deg, #6a4c93 324deg 360deg);
+            transition: transform 4s cubic-bezier(0.25, 0.1, 0.25, 1);
+            position: relative;
+            border: 5px solid #fff;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+        
+        .wheel-segment {
+            position: absolute;
+            width: 50%;
+            height: 50%;
+            top: 25%;
+            left: 25%;
+            transform-origin: 50% 100%;
+            text-align: center;
+            color: white;
+            font-weight: bold;
+            font-size: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #wheel-pointer {
+            position: absolute;
+            top: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 20px solid transparent;
+            border-right: 20px solid transparent;
+            border-top: 30px solid #facc15;
+            z-index: 10;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Header -->
+    <header class="bg-black/80 backdrop-blur-sm sticky top-0 z-50 border-b border-gray-800">
+        <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <img src="logo page.jpg" alt="Logo" class="h-12 w-12 rounded-full border-2 border-blue-500">
+                <span class="text-xl md:text-2xl font-bold text-white font-koulen">Software Tools Cambo</span>
+            </div>
+            <div class="flex items-center">
+                <nav class="hidden md:flex space-x-8">
+                    <a href="#home" class="text-gray-300 hover:text-blue-400 transition">Home</a>
+                    <a href="#vip" class="text-gray-300 hover:text-yellow-400 transition">VIP</a>
+                    <a href="#services" class="text-gray-300 hover:text-blue-400 transition">Services</a>
+                    <a href="#payment" class="text-gray-300 hover:text-blue-400 transition">Payment</a>
+                    <a href="#contact" class="text-gray-300 hover:text-blue-400 transition">Contact</a>
+                </nav>
+                <button id="account-button" class="ml-6 text-white hover:text-yellow-400 transition">
+                    <i class="fas fa-user-circle text-2xl"></i>
+                </button>
+                <button id="cart-button" class="ml-6 text-white relative hover:text-blue-400 transition">
+                    <i class="fas fa-shopping-cart text-2xl"></i>
+                    <span id="cart-count" class="absolute -top-2 -right-2 bg-red-600 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">0</span>
+                </button>
+                <button id="mobile-menu-button" class="md:hidden text-white ml-4">
+                    <i class="fas fa-bars text-2xl"></i>
+                </button>
+            </div>
+        </div>
+        <!-- Mobile Menu -->
+        <div id="mobile-menu" class="hidden md:hidden px-6 pb-4">
+            <a href="#home" class="block py-2 text-gray-300 hover:text-blue-400">Home</a>
+            <a href="#vip" class="block py-2 text-gray-300 hover:text-yellow-400">VIP</a>
+            <a href="#services" class="block py-2 text-gray-300 hover:text-blue-400">Services</a>
+            <a href="#payment" class="block py-2 text-gray-300 hover:text-blue-400">Payment</a>
+            <a href="#contact" class="block py-2 text-gray-300 hover:text-blue-400">Contact</a>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <main id="home" class="hero-bg">
+        <section class="container mx-auto px-6 py-16 md:py-24 text-center">
+            <div class="bg-black/30 backdrop-blur-sm rounded-lg py-8">
+                <h1 class="text-4xl md:text-6xl font-extrabold text-white font-koulen tracking-wide leading-tight">
+                    <span class="text-blue-400">Promotion ពិសេស</span> Software Tools
+                </h1>
+                <p class="mt-6 text-lg md:text-xl text-gray-300 max-w-3xl mx-auto">
+                    ChatGPT | Gemini | Canva | CapCut | YouTube
+                </p>
+                <p class="mt-4 text-xl md:text-2xl text-yellow-400 font-semibold">
+                    តម្លៃពិសេស មានការបញ្ចុះតម្លៃទាំងអស់
+                </p>
+                <p class="mt-2 text-md text-gray-400">
+                    ចុច Shop Now ទទួលបានភ្លាមៗ!
+                </p>
+
+                <!-- Promotion Code Section -->
+                <div class="mt-8 max-w-md mx-auto">
+                    <p class="text-lg text-green-400 font-semibold mb-2">Use Promo Code for 20% OFF!</p>
+                    <div class="flex items-center justify-center bg-gray-800/50 rounded-full p-1 sm:p-2">
+                        <input type="text" id="promo-code" placeholder="Enter promo code" class="bg-transparent text-white placeholder-gray-400 text-center w-full focus:outline-none">
+                        <button id="apply-promo" class="bg-green-500 text-white font-bold py-2 px-4 sm:px-6 rounded-full hover:bg-green-600 transition text-sm sm:text-base">Apply</button>
+                    </div>
+                    <p id="promo-message" class="mt-2 h-6 text-green-400 transition-opacity duration-300"></p>
+                </div>
+
+                <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+                    <a href="#services" class="btn-primary text-white font-bold py-3 px-8 rounded-full text-lg shadow-lg w-full sm:w-auto">
+                        View Products <i class="fas fa-arrow-down ml-2"></i>
+                    </a>
+                    <a href="https://t.me/ChhaySemz" target="_blank" class="bg-green-500 text-white font-bold py-3 px-8 rounded-full text-lg shadow-lg hover:bg-green-600 transition w-full sm:w-auto">
+                        Buy Now <i class="fab fa-telegram-plane ml-2"></i>
+                    </a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Spin Wheel Section -->
+    <section id="spin-win" class="py-16 bg-gray-900/50">
+        <div class="container mx-auto px-6 text-center">
+            <h2 class="text-3xl md:text-4xl font-bold text-yellow-400 font-koulen">Spin To Win a Gift!</h2>
+            <p class="text-gray-300 mt-2">Buy any product to get a free spin. You are guaranteed to win!</p>
+            <p class="text-lg mt-4">Your available spins: <span id="spin-count" class="font-bold text-2xl text-green-400">0</span></p>
+            <button id="open-wheel-modal-btn" class="mt-6 bg-yellow-500 text-black font-bold py-3 px-8 rounded-full text-lg shadow-lg hover:bg-yellow-400 transition disabled:bg-gray-600 disabled:cursor-not-allowed">
+                Spin the Wheel!
+            </button>
+            <div class="mt-4">
+                <button id="show-gifts-btn" class="text-gray-400 hover:text-white underline">View My Gifts</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- VIP Membership Section -->
+    <section id="vip" class="py-20 bg-black/70 backdrop-blur-sm">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl md:text-4xl font-bold text-yellow-400 font-koulen">VIP Membership</h2>
+                <p class="text-gray-400 mt-2">Unlock exclusive benefits and bundled tools.</p>
+            </div>
+            <div class="flex justify-center">
+                <div class="card rounded-lg p-6 text-center flex flex-col max-w-sm w-full">
+                    <img src="https://placehold.co/100x100/101010/FACC15?text=VIP" class="mx-auto rounded-full mb-4" alt="VIP">
+                    <h3 class="text-xl font-semibold text-white">VIP Membership</h3>
+                    <div class="text-gray-400 mt-2 flex-grow space-y-4 py-4">
+                        <div class="border-b border-gray-700 pb-3">
+                            <p>6 Month Access - <span class="font-bold text-blue-400">$30.00</span></p>
+                            <button data-product="VIP Membership (6mo)" data-price="30" class="add-to-cart-btn mt-2 text-sm btn-primary text-white font-semibold py-1 px-3 rounded-md">Add to Cart</button>
+                        </div>
+                        <div>
+                            <p>1 Year Access - <span class="font-bold text-blue-400">$50.00</span></p>
+                            <button data-product="VIP Membership (1yr)" data-price="50" class="add-to-cart-btn mt-2 text-sm btn-primary text-white font-semibold py-1 px-3 rounded-md">Add to Cart</button>
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-4">Contact admin after purchase with your User ID (from "My Account") to activate your status.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- Services Section -->
+    <section id="services" class="py-20 bg-gray-900/50 backdrop-blur-sm">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl md:text-4xl font-bold text-white font-koulen">Our Premium Software</h2>
+                <p class="text-gray-400 mt-2">Get access to the best tools on the market.</p>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                <!-- ChatGPT -->
+                <div class="card rounded-lg p-6 text-center flex flex-col">
+                    <img src="chat gpt plus.jpeg" class="mx-auto rounded-full mb-4" alt="ChatGPT">
+                    <h3 class="text-xl font-semibold text-white">ChatGPT Plus</h3>
+                    <div class="text-gray-400 mt-2 flex-grow space-y-4 py-4">
+                        <div class="border-b border-gray-700 pb-3">
+                            <p>Private Account - <span class="font-bold text-blue-400">$10/month</span></p>
+                            <button data-product="ChatGPT - Private (1mo)" data-price="10" class="add-to-cart-btn mt-2 text-sm btn-primary text-white font-semibold py-1 px-3 rounded-md">Add to Cart</button>
+                        </div>
+                        <div class="border-b border-gray-700 pb-3">
+                            <p>Shared Team - <span class="font-bold text-blue-400">$6/month</span></p>
+                            <button data-product="ChatGPT - Shared (1mo)" data-price="6" class="add-to-cart-btn mt-2 text-sm btn-primary text-white font-semibold py-1 px-3 rounded-md">Add to Cart</button>
+                        </div>
+                        <div>
+                            <p>Shared Team - <span class="font-bold text-blue-400">$20/3 months</span></p>
+                            <button data-product="ChatGPT - Shared (3mo)" data-price="20" class="add-to-cart-btn mt-2 text-sm btn-primary text-white font-semibold py-1 px-3 rounded-md">Add to Cart</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Gemini -->
+                <div class="card rounded-lg p-6 text-center flex flex-col">
+                    <img src="A3.JPG.jpg" class="mx-auto rounded-full mb-4" alt="Gemini">
+                    <h3 class="text-xl font-semibold text-white">Gemini</h3>
+                    <div class="text-gray-400 mt-2 flex-grow space-y-4 py-4">
+                        <div class="border-b border-gray-700 pb-3">
+                            <p>Gemini Pro - <span class="font-bold text-blue-400">$14/year</span></p>
+                            <button data-product="Gemini Pro (1yr)" data-price="14" class="add-to-cart-btn mt-2 text-sm btn-primary text-white font-semibold py-1 px-3 rounded-md">Add to Cart</button>
+                        </div>
+                        <div>
+                            <p>Gemini Ultra - <span class="font-bold text-blue-400">$18/month</span></p>
+                            <button data-product="Gemini Ultra (1mo)" data-price="18" class="add-to-cart-btn mt-2 text-sm btn-primary text-white font-semibold py-1 px-3 rounded-md">Add to Cart</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Canva -->
+                <div class="card rounded-lg p-6 text-center flex flex-col">
+                    <img src="A4.JPG.avif" class="mx-auto rounded-full mb-4" alt="Canva">
+                    <h3 class="text-xl font-semibold text-white">Canva Pro</h3>
+                    <p class="text-gray-400 mt-2 flex-grow">Professional Design Tool</p>
+                    <p class="text-lg font-bold text-blue-400 my-2">$5 <span class="text-sm font-normal text-gray-400">(Lifetime)</span></p>
+                    <button data-product="Canva Pro (Lifetime)" data-price="5" class="add-to-cart-btn mt-4 inline-block btn-primary text-white font-semibold py-2 px-6 rounded-lg">Add to Cart</button>
+                </div>
+                <!-- CapCut -->
+                <div class="card rounded-lg p-6 text-center flex flex-col">
+                    <img src="A2.JPG.jpg" class="mx-auto rounded-full mb-4" alt="CapCut">
+                    <h3 class="text-xl font-semibold text-white">CapCut Pro</h3>
+                    <p class="text-gray-400 mt-2 flex-grow">Easy Video Editing</p>
+                    <p class="text-lg font-bold text-blue-400 my-2">$5 <span class="text-sm font-normal text-gray-400">(1 Month)</span></p>
+                    <button data-product="CapCut Pro (1mo)" data-price="5" class="add-to-cart-btn mt-4 inline-block btn-primary text-white font-semibold py-2 px-6 rounded-lg">Add to Cart</button>
+                </div>
+                <!-- YouTube -->
+                <div class="card rounded-lg p-6 text-center flex flex-col">
+                    <img src="A1.JPG.avif" class="mx-auto rounded-full mb-4" alt="YouTube Premium">
+                    <h3 class="text-xl font-semibold text-white">YouTube Premium</h3>
+                    <p class="text-gray-400 mt-2 flex-grow">Ad-free & Offline</p>
+                    <p class="text-lg font-bold text-blue-400 my-2">$5 <span class="text-sm font-normal text-gray-400">(1 Month)</span></p>
+                    <button data-product="YouTube Premium (1mo)" data-price="5" class="add-to-cart-btn mt-4 inline-block btn-primary text-white font-semibold py-2 px-6 rounded-lg">Add to Cart</button>
+                </div>
+                <!-- Netflix -->
+                <div class="card rounded-lg p-6 text-center flex flex-col">
+                    <img src="netflex pro.jpeg" class="mx-auto rounded-full mb-4" alt="Netflix Premium">
+                    <h3 class="text-xl font-semibold text-white">Netflix Premium</h3>
+                    <p class="text-gray-400 mt-2 flex-grow">Ultra HD 4K Streaming</p>
+                    <p class="text-lg font-bold text-blue-400 my-2">$5 <span class="text-sm font-normal text-gray-400">(1 Month)</span></p>
+                    <button data-product="Netflix Premium (1mo)" data-price="5" class="add-to-cart-btn mt-4 inline-block btn-primary text-white font-semibold py-2 px-6 rounded-lg">Add to Cart</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Payment Section -->
+    <section id="payment" class="py-20 bg-gray-900/70 backdrop-blur-sm">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl md:text-4xl font-bold text-white font-koulen">Payment Methods</h2>
+                <p class="text-gray-400 mt-2">Scan to pay using your preferred app.</p>
+            </div>
+            <div class="flex flex-col md:flex-row flex-wrap justify-center items-center gap-12">
+                <!-- ABA QR -->
+                <div class="card rounded-lg p-8 text-center w-full max-w-xs">
+                    <h3 class="text-2xl font-semibold text-white mb-4">ABA PAY</h3>
+                    <img src="QR ABA.jpg" alt="ABA PAY QR Code" class="mx-auto rounded-lg">
+                    <p class="text-gray-400 mt-4">Name: LY SONGENG</p>
+                </div>
+                <!-- USDT QR -->
+                <div class="card rounded-lg p-8 text-center w-full max-w-xs">
+                    <h3 class="text-2xl font-semibold text-white mb-4">Binance (USDT)</h3>
+                    <img src="QR USDT.jpg" alt="Binance USDT QR Code" class="mx-auto rounded-lg">
+                    <p class="text-gray-400 mt-4">Name: OnlyMeExchange</p>
+                </div>
+                <!-- KHQR -->
+                <div class="card rounded-lg p-8 text-center w-full max-w-xs">
+                    <h3 class="text-2xl font-semibold text-white mb-4">KHQR</h3>
+                    <img src="QR AC.jpg" alt="KHQR Code" class="mx-auto rounded-lg max-w-[200px]">
+                    <p class="text-gray-400 mt-4">Name: HOK SAN PANHA</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Contact Section -->
+    <section id="contact" class="py-20 bg-black/70 backdrop-blur-sm">
+        <div class="container mx-auto px-6 text-center">
+            <h2 class="text-3xl md:text-4xl font-bold text-white font-koulen">Get In Touch</h2>
+            <p class="text-gray-400 mt-2 mb-8">Contact us for any questions or to purchase.</p>
+            <div class="flex flex-col md:flex-row justify-center items-center gap-6">
+                <a href="https://t.me/ChhaySemz" target="_blank" class="bg-blue-600 text-white py-3 px-8 rounded-lg text-lg font-semibold hover:bg-blue-700 transition w-full md:w-auto">
+                    <i class="fab fa-telegram-plane mr-2"></i> Contact Admin
+                </a>
+                <a href="https://t.me/TheDigitalMarketingNew" target="_blank" class="bg-gray-700 text-white py-3 px-8 rounded-lg text-lg font-semibold hover:bg-gray-600 transition w-full md:w-auto">
+                    <i class="fas fa-users mr-2"></i> Join Group
+                </a>
+            </div>
+
+            <!-- Buy Website Section -->
+            <div class="mt-16 border-t border-gray-700/50 pt-10">
+                <h3 class="text-2xl font-bold text-yellow-400 font-koulen">Want a Website Like This?</h3>
+                <p class="text-gray-300 mt-2 mb-6 max-w-2xl mx-auto">Get a custom, modern, and professional website for your own business. Contact us for a quote!</p>
+                <a href="https://t.me/ChhaySemz" target="_blank" class="bg-yellow-500 text-black py-3 px-8 rounded-lg text-lg font-bold hover:bg-yellow-400 transition transform hover:scale-105 shadow-lg inline-block">
+                    <i class="fas fa-shopping-cart mr-2"></i> Buy This Website
+                </a>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-black/80 backdrop-blur-sm border-t border-gray-800">
+        <div class="container mx-auto px-6 py-8">
+            <div class="flex flex-col md:flex-row justify-between items-center">
+                <p class="text-gray-400 mb-4 md:mb-0">អរគុណបងៗសម្រាប់ការគាំទ្រ</p>
+                <div class="flex space-x-6">
+                    <a href="https://web.facebook.com/profile.php?id=61551780722669" target="_blank" class="text-gray-400 hover:text-blue-500 social-icon text-2xl"><i class="fab fa-facebook"></i></a>
+                    <a href="https://www.tiktok.com/@softwaretools_cambo?_t=ZS-90USPrnoQAK&_r=1" target="_blank" class="text-gray-400 hover:text-white social-icon text-2xl"><i class="fab fa-tiktok"></i></a>
+                    <a href="https://t.me/ChhaySemz" target="_blank" class="text-gray-400 hover:text-blue-400 social-icon text-2xl"><i class="fab fa-telegram"></i></a>
+                </div>
+            </div>
+            <div class="text-center text-gray-500 mt-8 border-t border-gray-800 pt-6">
+                <p>&copy; 2024 Software Tools Cambo. All Rights Reserved.</p>
+                <!-- NEW: Admin Panel Button -->
+                <button id="admin-panel-btn" class="mt-4 text-xs text-gray-600 hover:text-gray-400 transition">
+                    Admin Panel
+                </button>
+            </div>
+        </div>
+    </footer>
+
+    <!-- AI Smart Bot -->
+    <div id="chat-bubble">
+        <i class="fas fa-robot text-2xl text-white"></i>
+    </div>
+    <div id="chat-window">
+        <div class="chat-header">
+            <span>AI Assistant</span>
+            <button id="close-chat" class="text-white text-2xl leading-none">&times;</button>
+        </div>
+        <div id="chat-messages" class="chat-messages"></div>
+        <div id="chat-options" class="chat-options flex flex-wrap justify-center"></div>
+    </div>
+
+    <!-- Modals -->
+    <div id="cart-modal" class="modal fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] hidden flex items-center justify-center p-4">
+        <div id="cart-panel" class="modal-panel bg-[#181818] border border-gray-700 w-full max-w-lg mx-4 rounded-lg shadow-lg flex flex-col h-full max-h-[600px]">
+            <div class="flex justify-between items-center p-4 border-b border-gray-700">
+                <h2 class="text-xl font-bold text-white font-koulen">Your Shopping Cart</h2>
+                <button id="close-cart-modal" class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div id="cart-items" class="p-4 flex-grow overflow-y-auto">
+                <p class="text-gray-400">Your cart is currently empty.</p>
+            </div>
+            <div id="cart-footer" class="p-4 border-t border-gray-700">
+                <div id="cart-summary" class="space-y-2"></div>
+                <a href="https://t.me/ChhaySemz" target="_blank" id="checkout-btn" class="mt-4 block w-full text-center bg-green-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-green-700 transition">
+                    Buy Now on Telegram <i class="fab fa-telegram-plane ml-2"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div id="wheel-modal" class="modal fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] hidden flex items-center justify-center p-4">
+        <div class="modal-panel bg-[#181818] border border-gray-700 w-full max-w-md mx-4 rounded-lg shadow-lg text-center p-6">
+            <h2 class="text-2xl font-bold text-yellow-400 font-koulen">Spin for a Prize!</h2>
+            <div id="wheel-container">
+                <div id="wheel-pointer"></div>
+                <div id="wheel"></div>
+            </div>
+            <button id="spin-btn" class="bg-green-500 text-white font-bold py-3 px-8 rounded-full text-lg shadow-lg hover:bg-green-600 transition disabled:bg-gray-600">Spin Now!</button>
+            <button id="close-wheel-modal" class="mt-4 text-gray-400 hover:text-white">Close</button>
+        </div>
+    </div>
+
+    <div id="result-modal" class="modal fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] hidden flex items-center justify-center p-4">
+        <div class="modal-panel bg-[#181818] border border-gray-700 w-full max-w-sm mx-4 rounded-lg shadow-lg text-center p-8">
+            <h2 class="text-xl font-bold text-green-400 font-koulen">Congratulations!</h2>
+            <p class="mt-2 text-lg">You won:</p>
+            <p id="prize-result" class="text-2xl font-bold text-yellow-400 my-4"></p>
+            <button id="close-result-modal" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg">Awesome!</button>
+        </div>
+    </div>
+
+    <!-- FIX: Re-added the missing "My Gifts" modal -->
+    <div id="gifts-modal" class="modal fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] hidden flex items-center justify-center p-4">
+        <div class="modal-panel bg-[#181818] border border-gray-700 w-full max-w-md mx-4 rounded-lg shadow-lg flex flex-col max-h-[500px]">
+            <div class="flex justify-between items-center p-4 border-b border-gray-700">
+                <h2 class="text-xl font-bold text-white font-koulen">My Won Gifts</h2>
+                <button id="close-gifts-modal" class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div id="gifts-list" class="p-6 space-y-3 overflow-y-auto">
+                <!-- Gifts will be rendered here by JS -->
+                <p class="text-gray-400 text-center">You haven't won any gifts yet. Spin the wheel to win!</p>
+            </div>
+            <div class="p-4 border-t border-gray-700">
+                <p class="text-xs text-gray-500 text-center">Contact admin with a screenshot of this list to claim your prizes.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- FIX: Re-added the missing Account Modal HTML -->
+    <!-- My Account Modal -->
+    <div id="account-modal" class="modal fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] hidden flex items-center justify-center p-4">
+        <div class="modal-panel bg-[#181818] border border-gray-700 w-full max-w-md mx-4 rounded-lg shadow-lg flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b border-gray-700">
+                <h2 class="text-xl font-bold text-white font-koulen">My Account</h2>
+                <button id="close-account-modal" class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div class="bg-gray-900 p-3 rounded-lg border border-gray-700">
+                    <p class="text-sm text-gray-400">Your Unique User ID:</p>
+                    <p id="user-id" class="text-lg font-mono text-blue-400 break-all">Loading...</p>
+                </div>
+                <div class="bg-gray-900 p-3 rounded-lg border border-gray-700">
+                    <p class="text-sm text-gray-400">VIP Status:</p>
+                    <p id="vip-status" class="text-lg font-semibold text-yellow-400">Loading...</p>
+                    <p class="text-xs text-gray-500">Expires: <span id="vip-expiry">--</span></p>
+                </div>
+
+                <!-- New Login Fields -->
+                <div>
+                    <label for="user-name" class="text-sm text-gray-400">Your Name:</label>
+                    <input type="text" id="user-name" placeholder="Enter your full name" class="mt-1 w-full bg-gray-900 text-white p-2 rounded border border-gray-700 focus:border-blue-500 focus:ring-0 outline-none">
+                </div>
+                <div>
+                    <label for="user-phone" class="text-sm text-gray-400">Phone Number:</label>
+                    <input type="tel" id="user-phone" placeholder="Enter your phone number" class="mt-1 w-full bg-gray-900 text-white p-2 rounded border border-gray-700 focus:border-blue-500 focus:ring-0 outline-none">
+                </div>
+                <div>
+                    <label for="vip-package-select" class="text-sm text-gray-400">VIP Package:</label>
+                    <select id="vip-package-select" class="mt-1 w-full bg-gray-900 text-white p-2 rounded border border-gray-700 focus:border-blue-500 focus:ring-0 outline-none">
+                        <option value="none">Not Selected</option>
+                        <option value="6month">VIP 6 Months</option>
+                        <option value="1year">VIP 1 Year</option>
+                    </select>
+                </div>
+
+                <button id="save-profile-btn" class="w-full btn-primary text-white font-semibold py-2 px-4 rounded-lg">Save Profile</button>
+                <p id="save-profile-status" class="text-center h-4 text-sm"></p>
+
+                <!-- NEW DIV FOR THE NOTIFY BUTTON -->
+                <div id="notify-admin-container" class="hidden text-center mt-4">
+                    <a id="notify-admin-btn" href="#" target="_blank" class="w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition inline-block">
+                        <i class="fab fa-telegram-plane mr-2"></i> Notify Admin to Activate
+                    </a>
+                </div>
+                <!-- End New Login Fields -->
+
+                <p class="text-xs text-gray-500 text-center mt-4">Provide your User ID to the admin when you purchase VIP to activate your account.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- NEW: Winner Announcement Modal -->
+    <div id="winner-announcement-modal" class="modal fixed inset-0 bg-black/60 backdrop-blur-sm z-[1002] hidden flex items-center justify-center p-4">
+        <div class="modal-panel bg-[#181818] border border-yellow-500 w-full max-w-md mx-4 rounded-lg shadow-lg text-center p-8 relative">
+            <button id="close-winner-modal" class="absolute top-3 right-4 text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+            <i class="fas fa-trophy text-6xl text-yellow-400 mb-4"></i>
+            <h2 class="text-2xl font-bold text-white font-koulen">We Have a Winner!</h2>
+            <p id="winner-announcement-text" class="mt-4 text-lg text-gray-300"></p>
+        </div>
+    </div>
+
+    <!-- NEW: Admin Panel Modal -->
+    <div id="admin-modal" class="modal fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] hidden flex items-center justify-center p-4">
+        <div class="modal-panel bg-[#181818] border border-gray-700 w-full max-w-md mx-4 rounded-lg shadow-lg flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b border-gray-700">
+                <h2 class="text-xl font-bold text-white font-koulen">Admin Panel</h2>
+                <button id="close-admin-modal" class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div class="p-6 space-y-4">
+                <p class="text-sm text-gray-400">Enter the winner's name to announce to all users:</p>
+                <div>
+                    <label for="winner-name" class="text-sm text-gray-400">Winner's Name:</label>
+                    <input type="text" id="winner-name" placeholder="Enter name from Firebase" class="mt-1 w-full bg-gray-900 text-white p-2 rounded border border-gray-700 focus:border-blue-500 focus:ring-0 outline-none">
+                </div>
+                <button id="announce-winner-btn" class="w-full btn-primary text-white font-semibold py-2 px-4 rounded-lg">Announce Winner</button>
+                <p id="admin-status" class="text-center h-4 text-sm"></p>
+                <p class="text-xs text-gray-500 mt-4">Note: This panel is for admin use only. Please get the winner's name from your Firebase Console first.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+                    // --- DEBOUNCE UTILITY ---
+                    function debounce(func, wait) {
+                        let timeout;
+                        return function executedFunction(...args) {
+                            const later = () => {
+                                clearTimeout(timeout);
+                                func(...args);
+                            };
+                            clearTimeout(timeout);
+                            timeout = setTimeout(later, wait);
+                        };
+                    }
+
+                    // --- Mobile menu toggle ---
+                    const mobileMenuButton = document.getElementById('mobile-menu-button');
+                    const mobileMenu = document.getElementById('mobile-menu');
+                    mobileMenuButton.addEventListener('click', () => mobileMenu.classList.toggle('hidden'));
+                    const mobileMenuLinks = mobileMenu.querySelectorAll('a');
+                    for (let link of mobileMenuLinks) {
+                        link.addEventListener('click', () => mobileMenu.classList.add('hidden'));
+                    }
+
+                    // --- Shopping Cart & Spin Logic ---
+                    const cartButton = document.getElementById('cart-button');
+                    const cartModal = document.getElementById('cart-modal');
+                    const closeCartModal = document.getElementById('close-cart-modal');
+                    const cartCount = document.getElementById('cart-count');
+                    const cartItemsContainer = document.getElementById('cart-items');
+                    const cartSummaryContainer = document.getElementById('cart-summary');
+                    const servicesSection = document.getElementById('services');
+                    const spinCountEl = document.getElementById('spin-count');
+                    const openWheelBtn = document.getElementById('open-wheel-modal-btn');
+
+                    let cart = [];
+                    let promoApplied = false;
+                    let availableSpins = parseInt(localStorage.getItem('availableSpins') || '0');
+
+                    const updateSpinCounter = () => {
+                        spinCountEl.textContent = availableSpins;
+                        openWheelBtn.disabled = availableSpins <= 0;
+                    };
+
+                    const openModal = (modalId) => document.getElementById(modalId).classList.remove('hidden');
+                    const closeModal = (modalId) => document.getElementById(modalId).classList.add('hidden');
+
+                    cartButton.addEventListener('click', () => openModal('cart-modal'));
+                    closeCartModal.addEventListener('click', () => closeModal('cart-modal'));
+                    cartModal.addEventListener('click', (e) => {
+                        if (e.target === cartModal) closeModal('cart-modal');
+                    });
+
+                    // Account Modal listeners
+                    const accountButton = document.getElementById('account-button');
+                    const closeAccountModal = document.getElementById('close-account-modal');
+                    const accountModal = document.getElementById('account-modal');
+
+                    accountButton.addEventListener('click', () => openModal('account-modal'));
+                    closeAccountModal.addEventListener('click', () => closeModal('account-modal'));
+                    accountModal.addEventListener('click', (e) => {
+                        if (e.target === accountModal) closeModal('account-modal');
+                    });
+
+                    // --- NEW: Admin/Winner Modal Listeners ---
+                    const adminPanelBtn = document.getElementById('admin-panel-btn');
+                    const adminModal = document.getElementById('admin-modal');
+                    const closeAdminModalBtn = document.getElementById('close-admin-modal');
+
+                    adminPanelBtn.addEventListener('click', () => openModal('admin-modal'));
+                    closeAdminModalBtn.addEventListener('click', () => closeModal('admin-modal'));
+                    adminModal.addEventListener('click', (e) => {
+                        if (e.target === adminModal) closeModal('admin-modal');
+                    });
+
+                    const winnerModal = document.getElementById('winner-announcement-modal');
+                    const closeWinnerModalBtn = document.getElementById('close-winner-modal');
+                    closeWinnerModalBtn.addEventListener('click', () => closeModal('winner-announcement-modal'));
+                    winnerModal.addEventListener('click', (e) => {
+                        if (e.target === winnerModal) closeModal('winner-announcement-modal');
+                    });
+                    // --- END: NEW Listeners ---
+
+
+                    const addToCart = (product, price) => {
+                        if (cart.find(item => item.product === product)) {
+                            // Custom Alert
+                            showResultModal(`"${product}" is already in your cart.`, 'Already Added');
+                            return;
+                        }
+                        cart.push({
+                            product,
+                            price: parseFloat(price)
+                        });
+                        availableSpins++;
+                        localStorage.setItem('availableSpins', availableSpins);
+                        updateCart();
+                        updateSpinCounter();
+                    };
+                    const removeFromCart = (product) => {
+                        cart = cart.filter(item => item.product !== product);
+                        updateCart();
+                    };
+                    const updateCart = debounce(() => {
+                        renderCartItems();
+                        renderCartSummary();
+                        cartCount.textContent = cart.length;
+                    }, 100);
+
+                    const renderCartItems = () => {
+                        cartItemsContainer.innerHTML = '';
+                        if (cart.length === 0) {
+                            cartItemsContainer.innerHTML = '<p class="text-gray-400">Your cart is currently empty.</p>';
+                            return;
+                        }
+                        cart.forEach(item => {
+                            const itemEl = document.createElement('div');
+                            itemEl.className = 'flex justify-between items-center py-3 border-b border-gray-800';
+                            itemEl.innerHTML = `
+                        <div class="flex-grow pr-4"><p class="font-semibold text-white">${item.product}</p></div>
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                            <p class="font-semibold text-blue-400 w-16 text-right">$${item.price.toFixed(2)}</p>
+                            <a href="https://t.me/ChhaySemz" target="_blank" class="buy-item-btn bg-green-500 text-white text-xs font-bold py-1 px-3 rounded-full hover:bg-green-600 transition whitespace-nowrap">Buy Now</a>
+                            <button class="remove-from-cart-btn text-red-500 hover:text-red-400 text-xl w-6 text-center" data-product="${item.product}">&times;</button>
+                        </div>`;
+                            cartItemsContainer.appendChild(itemEl);
+                        });
+                    };
+                    const renderCartSummary = () => {
+                            const cartFooter = document.getElementById('cart-footer');
+                            if (cart.length === 0) {
+                                cartSummaryContainer.innerHTML = '';
+                                if (cartFooter) cartFooter.classList.add('hidden');
+                                return;
+                            }
+                            if (cartFooter) cartFooter.classList.remove('hidden');
+                            const subtotal = cart.reduce((acc, item) => acc + item.price, 0);
+                            const discount = promoApplied ? subtotal * 0.20 : 0;
+                            const total = subtotal - discount;
+                            cartSummaryContainer.innerHTML = `
+                    <div class="flex justify-between text-gray-300"><span>Subtotal</span><span>$${subtotal.toFixed(2)}</span></div>
+                    ${promoApplied ? `<div class="flex justify-between text-green-400"><span>Discount (20%)</span><span>-$${discount.toFixed(2)}</span></div>` : ''}
+                    <div class="flex justify-between text-white font-bold text-lg mt-2"><span>Total</span><span>$${total.toFixed(2)}</span></div>`;
+            };
+            
+            servicesSection.addEventListener('click', (e) => {
+                if (e.target.matches('.add-to-cart-btn')) {
+                    const { product, price } = e.target.dataset;
+                    addToCart(product, price);
+                }
+            });
+            cartItemsContainer.addEventListener('click', (e) => {
+                if (e.target.matches('.remove-from-cart-btn')) removeFromCart(e.target.dataset.product);
+            });
+
+            // --- Spin Wheel Logic ---
+            const wheelModal = document.getElementById('wheel-modal');
+            const closeWheelModalBtn = document.getElementById('close-wheel-modal');
+            const spinBtn = document.getElementById('spin-btn');
+            const wheel = document.getElementById('wheel');
+            const prizeResultEl = document.getElementById('prize-result');
+            const resultModal = document.getElementById('result-modal');
+            const closeResultModalBtn = document.getElementById('close-result-modal');
+            const showGiftsBtn = document.getElementById('show-gifts-btn');
+            const giftsModal = document.getElementById('gifts-modal'); // FIX: Was null
+            const closeGiftsModalBtn = document.getElementById('close-gifts-modal'); // FIX: Was null
+            const giftsListContainer = document.getElementById('gifts-list'); // FIX: Was null
+
+            const prizes = ["ChatGPT 1mo", "Try Again", "Good Day!", "YouTube 1mo", "Gemini 1mo", "Try Again", "Good Day!", "Canva Pro", "Try Again", "Good Day!"];
+            const segmentAngle = 360 / prizes.length;
+            let isSpinning = false;
+            let currentRotation = 0;
+
+            openWheelBtn.addEventListener('click', () => openModal('wheel-modal'));
+            closeWheelModalBtn.addEventListener('click', () => closeModal('wheel-modal'));
+            closeResultModalBtn.addEventListener('click', () => closeModal('result-modal'));
+            
+            showGiftsBtn.addEventListener('click', () => {
+                renderWonPrizes();
+                openModal('gifts-modal');
+            });
+            closeGiftsModalBtn.addEventListener('click', () => closeModal('gifts-modal'));
+            giftsModal.addEventListener('click', (e) => { if (e.target === giftsModal) closeModal('gifts-modal'); });
+
+
+            spinBtn.addEventListener('click', () => {
+                if (isSpinning || availableSpins <= 0) return;
+                
+                isSpinning = true;
+                spinBtn.disabled = true;
+                availableSpins--;
+                localStorage.setItem('availableSpins', availableSpins);
+                updateSpinCounter();
+
+                const randomSpins = Math.floor(Math.random() * 5) + 5; // Spin 5-9 full rotations
+                const randomStopIndex = Math.floor(Math.random() * prizes.length);
+                const stopAngle = (randomStopIndex * segmentAngle) + (segmentAngle / 2); // Center of segment
+                const totalRotation = (randomSpins * 360) + stopAngle;
+                
+                currentRotation += totalRotation;
+                wheel.style.transform = `rotate(${currentRotation}deg)`;
+
+                setTimeout(() => {
+                    isSpinning = false;
+                    spinBtn.disabled = false;
+                    const prize = prizes[randomStopIndex];
+                    showResultModal(prize, "Congratulations!");
+                    
+                    if (!prize.toLowerCase().includes('try again') && !prize.toLowerCase().includes('good day')) {
+                        let wonPrizes = JSON.parse(localStorage.getItem('wonPrizes') || '[]');
+                        wonPrizes.push(prize);
+                        localStorage.setItem('wonPrizes', JSON.stringify(wonPrizes));
+                    }
+                    closeModal('wheel-modal');
+                }, 4100); // slightly longer than transition
+            });
+            
+            const renderWonPrizes = () => {
+                const wonPrizes = JSON.parse(localStorage.getItem('wonPrizes') || '[]');
+                giftsListContainer.innerHTML = '';
+                if (wonPrizes.length === 0) {
+                    giftsListContainer.innerHTML = '<p class="text-gray-400 text-center">You haven\'t won any gifts yet. Spin the wheel to win!</p>';
+                    return;
+                }
+                const prizeList = document.createElement('ul');
+                prizeList.className = 'space-y-3';
+                wonPrizes.forEach(prize => {
+                    const listItem = document.createElement('li');
+                    listItem.className = 'bg-gray-800/50 p-3 rounded-lg flex items-center gap-3';
+                    listItem.innerHTML = `<i class="fas fa-gift text-yellow-400"></i><span class="font-semibold text-white">${prize}</span>`;
+                    prizeList.appendChild(listItem);
+                });
+                giftsListContainer.appendChild(prizeList);
+            };
+
+            function showResultModal(prize, title) {
+                prizeResultEl.textContent = prize;
+                resultModal.querySelector('h2').textContent = title;
+                openModal('result-modal');
+            }
+
+
+            // --- AI Smart Bot Script ---
+            const chatBubble = document.getElementById('chat-bubble');
+            const chatWindow = document.getElementById('chat-window');
+            const closeChat = document.getElementById('close-chat');
+            const chatMessages = document.getElementById('chat-messages');
+            const chatOptions = document.getElementById('chat-options');
+            let chatInitialized = false;
+            const conversation = {
+                start: { bot: "Hello! Welcome to Software Tools Cambo. How can I assist you today?", options: ["View Services", "Payment Info", "Contact Admin"] },
+                "View Services": { bot: "We offer premium accounts for many tools. You can see them all in our Services section.", options: ["Payment Info", "Contact Admin", "Start Over"] },
+                "Payment Info": { bot: "You can pay via ABA or Binance USDT. Check the 'Payment' section for QR codes. Once paid, please send a screenshot to the admin.", options: ["View Services", "Contact Admin", "Start Over"] },
+                "Contact Admin": { bot: "Sure! You can chat directly with our admin on Telegram for support or to confirm your payment.", action: () => window.open('https://t.me/ChhaySemz', '_blank'), options: ["View Services", "Payment Info", "Start Over"] },
+                "Start Over": { bot: "How else can I help you?", options: ["View Services", "Payment Info", "Contact Admin"] }
+            };
+            const addMessage = (text, sender) => {
+                const messageEl = document.createElement('div');
+                messageEl.classList.add('message', sender);
+                messageEl.textContent = text;
+                chatMessages.appendChild(messageEl);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            };
+            const showOptions = (options) => {
+                chatOptions.innerHTML = '';
+                options.forEach(optionText => {
+                    const button = document.createElement('button');
+                    button.textContent = optionText;
+                    button.classList.add('option-btn');
+                    button.addEventListener('click', () => handleOptionClick(optionText));
+                    chatOptions.appendChild(button);
+                });
+            };
+            const handleOptionClick = (optionText) => {
+                addMessage(optionText, 'user');
+                setTimeout(() => {
+                    const response = conversation[optionText];
+                    if (response.bot) addMessage(response.bot, 'bot');
+                    if (response.action) response.action();
+                    if (response.options) showOptions(response.options);
+                }, 500);
+            };
+            const initializeChat = () => {
+                if (!chatInitialized) {
+                    setTimeout(() => {
+                        addMessage(conversation.start.bot, 'bot');
+                        showOptions(conversation.start.options);
+                    }, 500);
+                    chatInitialized = true;
+                }
+            };
+            chatBubble.addEventListener('click', () => { chatWindow.classList.toggle('open'); initializeChat(); });
+            closeChat.addEventListener('click', () => chatWindow.classList.remove('open'));
+
+            // --- Promotion Code Script ---
+            const applyPromoBtn = document.getElementById('apply-promo');
+            const promoCodeInput = document.getElementById('promo-code');
+            const promoMessage = document.getElementById('promo-message');
+            applyPromoBtn.addEventListener('click', () => {
+                const enteredCode = promoCodeInput.value.trim().toUpperCase();
+                if (enteredCode === 'THESEM') {
+                    promoMessage.textContent = 'Code "THESEM" applied! 20% discount activated.';
+                    promoMessage.classList.remove('text-red-400');
+                    promoMessage.classList.add('text-green-400');
+                    promoApplied = true;
+                } else {
+                    promoMessage.textContent = 'Invalid promotion code.';
+                    promoMessage.classList.remove('text-green-400');
+                    promoMessage.classList.add('text-red-400');
+                    promoApplied = false;
+                }
+                updateCart();
+                setTimeout(() => { promoMessage.textContent = ''; }, 4000);
+            });
+
+            // Initial calls on page load
+            updateCart();
+            updateSpinCounter();
+        });
+    </script>
+
+</body>
+
+</html>
